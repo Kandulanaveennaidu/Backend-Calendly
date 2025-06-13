@@ -29,6 +29,11 @@ const meetingSchema = new mongoose.Schema({
         required: [true, 'Scheduled date and time is required'],
         index: true
     },
+    date: {
+        type: String, // Store date in YYYY-MM-DD format
+        required: true,
+        match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format']
+    },
     duration: {
         type: Number,
         required: [true, 'Duration is required'],

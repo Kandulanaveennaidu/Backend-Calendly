@@ -51,9 +51,6 @@ const getMeetingsValidation = [
 
 // Validation for creating meeting
 const createMeetingValidation = [
-    body('meetingTypeId')
-        .isMongoId()
-        .withMessage('Invalid meeting type ID'),
     body('title')
         .trim()
         .isLength({ min: 1, max: 200 })
@@ -61,33 +58,36 @@ const createMeetingValidation = [
     body('description')
         .optional()
         .trim()
-        .isLength({ max: 1000 })
-        .withMessage('Description cannot exceed 1000 characters'),
-    body('scheduledAt')
+        .isLength({ max: 500 })
+        .withMessage('Description cannot exceed 500 characters'),
+    body('date')
+        .optional()
         .isISO8601()
-        .withMessage('Scheduled date must be a valid ISO 8601 date'),
+        .withMessage('Date must be in YYYY-MM-DD format'),
+    body('time')
+        .optional()
+        .matches(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
+        .withMessage('Time must be in HH:MM format'),
+    body('scheduledAt')
+        .optional()
+        .isISO8601()
+        .withMessage('ScheduledAt must be a valid ISO date'),
     body('duration')
         .optional()
-        .isInt({ min: 5 })
-        .withMessage('Duration must be at least 5 minutes'),
+        .isInt({ min: 5, max: 480 })
+        .withMessage('Duration must be between 5 and 480 minutes'),
+    body('meetingTypeId')
+        .isMongoId()
+        .withMessage('Valid meeting type ID is required'),
     body('attendees')
-        .isArray({ min: 1 })
-        .withMessage('At least one attendee is required'),
-    body('attendees.*.name')
+        .optional()
+        .isArray()
+        .withMessage('Attendees must be an array'),
+    body('notes')
+        .optional()
         .trim()
-        .isLength({ min: 1 })
-        .withMessage('Attendee name is required'),
-    body('attendees.*.email')
-        .isEmail()
-        .withMessage('Valid attendee email is required'),
-    body('location.type')
-        .optional()
-        .isIn(['in-person', 'video-call', 'phone-call', 'custom'])
-        .withMessage('Invalid location type'),
-    body('timezone')
-        .optional()
-        .isString()
-        .withMessage('Timezone must be a string')
+        .isLength({ max: 1000 })
+        .withMessage('Notes cannot exceed 1000 characters')
 ];
 
 // Validation for updating meeting

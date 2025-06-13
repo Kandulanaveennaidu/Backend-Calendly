@@ -8,6 +8,7 @@ const profileRoutes = require('./profileRoutes');
 const meetingTypeRoutes = require('./meetingTypeRoutes');
 const meetingRoutes = require('./meetingRoutes');
 const calendarRoutes = require('./calendarRoutes');
+const dashboardRoutes = require('./dashboardRoutes');
 
 // Use routes with proper middleware
 router.use('/auth', authRoutes);
@@ -16,6 +17,7 @@ router.use('/profile', profileRoutes);
 router.use('/meeting-types', meetingTypeRoutes);
 router.use('/meetings', meetingRoutes);
 router.use('/calendar', calendarRoutes);
+router.use('/dashboard', dashboardRoutes); // Remove auth middleware for now
 
 // API documentation endpoint
 router.get('/', (req, res) => {
@@ -61,6 +63,8 @@ router.get('/', (req, res) => {
       },
       meetings: {
         getAll: 'GET /api/v1/meetings',
+        getTodays: 'GET /api/v1/meetings/today',
+        getTomorrows: 'GET /api/v1/meetings/tomorrow',
         getUpcoming: 'GET /api/v1/meetings/upcoming',
         getById: 'GET /api/v1/meetings/:id',
         create: 'POST /api/v1/meetings',
@@ -87,6 +91,10 @@ router.get('/', (req, res) => {
         addAttendees: 'POST /api/v1/calendar/events/:eventId/attendees',
         removeAttendee: 'DELETE /api/v1/calendar/events/:eventId/attendees/:attendeeEmail',
         getCalendarStats: 'GET /api/v1/calendar/stats'
+      },
+      dashboard: {
+        getStats: 'GET /api/v1/dashboard/stats',
+        getRecentActivity: 'GET /api/v1/dashboard/recent-activity'
       }
     },
     instructions: {
@@ -111,7 +119,8 @@ router.get('/health', (req, res) => {
       meetingTypes: 'Available',
       meetings: 'Available',
       users: 'Available',
-      calendar: 'Available'
+      calendar: 'Available',
+      dashboard: 'Available'
     }
   });
 });

@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
-const MeetingType = require('../models/MeetingType');
+const MeetingTypeDefinition = require('../models/MeetingTypeDefinition');
 const Meeting = require('../models/Meeting');
+const notificationService = require('../services/simpleNotificationService');
 
 // @desc    Get all meeting types for user
 // @route   GET /api/v1/meeting-types
@@ -20,36 +21,49 @@ const getMeetingTypes = async (req, res, next) => {
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
 
-        const filter = { userId: req.user._id };
+        const filter = { createdBy: req.user._id };
 
-        // Add status filter if provided
-        if (req.query.status) {
-            filter.isActive = req.query.status === 'active';
+        // ✅ Filter by availableDate if provided
+        if (req.query.availableDate) {
+            const filterDate = new Date(req.query.availableDate);
+            filter.availableDate = {
+                $gte: new Date(filterDate.setHours(0, 0, 0, 0)),
+                $lt: new Date(filterDate.setHours(23, 59, 59, 999))
+            };
         }
 
-        // Build sort object
-        let sortBy = req.query.sortBy || 'createdAt';
-        let sortOrder = req.query.sortOrder === 'asc' ? 1 : -1;
-        const sortObj = { [sortBy]: sortOrder };
+        if (req.query.status === 'active') {
+            filter.isActive = true;
+        } else if (req.query.status === 'inactive') {
+            filter.isActive = false;
+        }
 
-        const meetingTypes = await MeetingType.find(filter)
-            .sort(sortObj)
+        const meetingTypes = await MeetingTypeDefinition.find(filter)
+            .sort({ createdAt: -1 })
             .skip(skip)
-            .limit(limit);
+            .limit(limit)
+            .lean({ virtuals: true });
 
-        const total = await MeetingType.countDocuments(filter);
-        const hasMore = skip + meetingTypes.length < total;
+        const total = await MeetingTypeDefinition.countDocuments(filter);
+
+        // ✅ Format response to include availableDate and dateFormatted
+        const formattedMeetingTypes = meetingTypes.map(mt => ({
+            ...mt,
+            availableDate: mt.availableDate,
+            dateFormatted: mt.dateFormatted, // Virtual field
+            duration: mt.defaultDuration, // Map defaultDuration to duration for frontend compatibility
+        }));
 
         res.json({
             success: true,
             data: {
-                meetingTypes,
+                meetingTypes: formattedMeetingTypes,
                 pagination: {
-                    page,
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit),
+                    totalMeetingTypes: total,
                     limit,
-                    total,
-                    hasMore,
-                    pages: Math.ceil(total / limit)
+                    hasMore: skip + meetingTypes.length < total
                 }
             }
         });
@@ -66,26 +80,26 @@ const getMeetingTypesStats = async (req, res, next) => {
         const userId = req.user._id;
 
         // Get total meeting types count
-        const totalMeetingTypes = await MeetingType.countDocuments({ userId });
+        const totalMeetingTypes = await MeetingTypeDefinition.countDocuments({ userId });
 
         // Get active meeting types count
-        const activeMeetingTypes = await MeetingType.countDocuments({
+        const activeMeetingTypes = await MeetingTypeDefinition.countDocuments({
             userId,
             isActive: true
         });
 
         // Get inactive meeting types count
-        const inactiveMeetingTypes = await MeetingType.countDocuments({
+        const inactiveMeetingTypes = await MeetingTypeDefinition.countDocuments({
             userId,
             isActive: false
         });
 
         // Get total bookings across all meeting types
-        const meetingTypes = await MeetingType.find({ userId });
+        const meetingTypes = await MeetingTypeDefinition.find({ userId });
         const totalBookings = meetingTypes.reduce((sum, type) => sum + (type.totalBookings || 0), 0);
 
         // Get most popular meeting type
-        const mostPopularMeetingType = await MeetingType.findOne({ userId })
+        const mostPopularMeetingType = await MeetingTypeDefinition.findOne({ userId })
             .sort({ totalBookings: -1 })
             .limit(1);
 
@@ -114,9 +128,9 @@ const getMeetingTypesStats = async (req, res, next) => {
 // @access  Private
 const getMeetingTypeById = async (req, res, next) => {
     try {
-        const meetingType = await MeetingType.findOne({
+        const meetingType = await MeetingTypeDefinition.findOne({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -137,7 +151,7 @@ const getMeetingTypeById = async (req, res, next) => {
     }
 };
 
-// @desc    Create new meeting type
+// @desc    Create meeting type with availableDate
 // @route   POST /api/v1/meeting-types
 // @access  Private
 const createMeetingType = async (req, res, next) => {
@@ -151,32 +165,91 @@ const createMeetingType = async (req, res, next) => {
             });
         }
 
+        // Ensure availableDate is provided
+        if (!req.body.availableDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'availableDate is required'
+            });
+        }
+
         const meetingTypeData = {
-            ...req.body,
-            userId: req.user._id
+            name: req.body.name,
+            description: req.body.description || '',
+            defaultDuration: req.body.duration || req.body.defaultDuration,
+            color: req.body.color || '#006bff',
+            icon: req.body.icon || 'FiCalendar',
+            isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+
+            // ✅ Handle availableDate properly
+            availableDate: new Date(req.body.availableDate),
+
+            // Calendar Integration Fields
+            availableDays: req.body.availableDays || [1, 2, 3, 4, 5],
+            availableTimeSlots: req.body.availableTimeSlots || [],
+            timezone: req.body.timezone || 'UTC',
+            bufferTime: req.body.bufferTime || 0,
+            maxBookingsPerDay: req.body.maxBookingsPerDay || 10,
+            advanceBookingDays: req.body.advanceBookingDays || 30,
+            minimumNotice: req.body.minimumNotice || 24,
+
+            // Settings object
+            settings: req.body.settings || {
+                bufferTimeBefore: 5,
+                bufferTimeAfter: 5,
+                allowRescheduling: true,
+                allowCancellation: true,
+                requireApproval: false,
+                maxAdvanceBooking: 30
+            },
+
+            createdBy: req.user._id,
+            totalBookings: 0
         };
 
-        const meetingType = await MeetingType.create(meetingTypeData);
+        const meetingType = await MeetingTypeDefinition.create(meetingTypeData);
+
+        // Generate booking link
+        const bookingLink = `scheduleme.com/${req.user._id}/${meetingType.name.toLowerCase().replace(/\s+/g, '-')}-${meetingType._id.toString().slice(-6)}`;
+
+        // Update with booking link
+        meetingType.bookingLink = bookingLink;
+        await meetingType.save();
+
+        // Send notification
+        try {
+            notificationService.sendMeetingTypeCreated(req.user._id, meetingType);
+        } catch (notificationError) {
+            console.log('Notification error:', notificationError.message);
+        }
+
+        // ✅ Format response with availableDate and dateFormatted
+        const responseData = {
+            ...meetingType.toObject(),
+            availableDate: meetingType.availableDate,
+            dateFormatted: meetingType.dateFormatted, // Virtual field
+            bookingLink: bookingLink
+        };
 
         res.status(201).json({
             success: true,
             message: 'Meeting type created successfully',
             data: {
-                meetingType
+                meetingType: responseData
             }
         });
     } catch (error) {
         if (error.code === 11000) {
             return res.status(400).json({
                 success: false,
-                message: 'A meeting type with this name already exists'
+                message: 'Meeting type name already exists'
             });
         }
         next(error);
     }
 };
 
-// @desc    Update meeting type
+// @desc    Update meeting type with availableDate
 // @route   PUT /api/v1/meeting-types/:id
 // @access  Private
 const updateMeetingType = async (req, res, next) => {
@@ -190,11 +263,23 @@ const updateMeetingType = async (req, res, next) => {
             });
         }
 
-        const meetingType = await MeetingType.findOneAndUpdate(
-            { _id: req.params.id, userId: req.user._id },
-            req.body,
+        const updateData = { ...req.body };
+
+        // ✅ Handle availableDate update
+        if (req.body.availableDate) {
+            updateData.availableDate = new Date(req.body.availableDate);
+        }
+
+        // Map duration to defaultDuration if provided
+        if (req.body.duration) {
+            updateData.defaultDuration = req.body.duration;
+        }
+
+        const meetingType = await MeetingTypeDefinition.findOneAndUpdate(
+            { _id: req.params.id, createdBy: req.user._id },
+            updateData,
             { new: true, runValidators: true }
-        );
+        ).lean({ virtuals: true });
 
         if (!meetingType) {
             return res.status(404).json({
@@ -203,12 +288,18 @@ const updateMeetingType = async (req, res, next) => {
             });
         }
 
+        // ✅ Format response with availableDate and dateFormatted
+        const responseData = {
+            ...meetingType,
+            availableDate: meetingType.availableDate,
+            dateFormatted: meetingType.dateFormatted,
+            duration: meetingType.defaultDuration
+        };
+
         res.json({
             success: true,
             message: 'Meeting type updated successfully',
-            data: {
-                meetingType
-            }
+            data: { meetingType: responseData }
         });
     } catch (error) {
         next(error);
@@ -220,9 +311,9 @@ const updateMeetingType = async (req, res, next) => {
 // @access  Private
 const deleteMeetingType = async (req, res, next) => {
     try {
-        const meetingType = await MeetingType.findOneAndDelete({
+        const meetingType = await MeetingTypeDefinition.findOneAndDelete({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -246,9 +337,9 @@ const deleteMeetingType = async (req, res, next) => {
 // @access  Private
 const toggleMeetingTypeStatus = async (req, res, next) => {
     try {
-        const meetingType = await MeetingType.findOne({
+        const meetingType = await MeetingTypeDefinition.findOne({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -278,9 +369,9 @@ const toggleMeetingTypeStatus = async (req, res, next) => {
 // @access  Private
 const duplicateMeetingType = async (req, res, next) => {
     try {
-        const originalMeetingType = await MeetingType.findOne({
+        const originalMeetingType = await MeetingTypeDefinition.findOne({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!originalMeetingType) {
@@ -302,7 +393,7 @@ const duplicateMeetingType = async (req, res, next) => {
         delete duplicatedData.createdAt;
         delete duplicatedData.updatedAt;
 
-        const duplicatedMeetingType = await MeetingType.create(duplicatedData);
+        const duplicatedMeetingType = await MeetingTypeDefinition.create(duplicatedData);
 
         res.status(201).json({
             success: true,
@@ -330,9 +421,9 @@ const updateMeetingTypeSettings = async (req, res, next) => {
             });
         }
 
-        const meetingType = await MeetingType.findOne({
+        const meetingType = await MeetingTypeDefinition.findOne({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -375,9 +466,9 @@ const getMeetingTypeBookings = async (req, res, next) => {
         }
 
         // First check if meeting type exists and belongs to user
-        const meetingType = await MeetingType.findOne({
+        const meetingType = await MeetingTypeDefinition.findOne({
             _id: req.params.id,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -450,9 +541,9 @@ const bulkUpdateMeetingTypes = async (req, res, next) => {
         const { meetingTypeIds, action } = req.body;
 
         // Verify all meeting types belong to the user
-        const meetingTypes = await MeetingType.find({
+        const meetingTypes = await MeetingTypeDefinition.find({
             _id: { $in: meetingTypeIds },
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (meetingTypes.length !== meetingTypeIds.length) {
@@ -467,16 +558,16 @@ const bulkUpdateMeetingTypes = async (req, res, next) => {
 
         switch (action) {
             case 'activate':
-                result = await MeetingType.updateMany(
-                    { _id: { $in: meetingTypeIds }, userId: req.user._id },
+                result = await MeetingTypeDefinition.updateMany(
+                    { _id: { $in: meetingTypeIds }, createdBy: req.user._id },
                     { isActive: true }
                 );
                 message = `${result.modifiedCount} meeting types activated successfully`;
                 break;
 
             case 'deactivate':
-                result = await MeetingType.updateMany(
-                    { _id: { $in: meetingTypeIds }, userId: req.user._id },
+                result = await MeetingTypeDefinition.updateMany(
+                    { _id: { $in: meetingTypeIds }, createdBy: req.user._id },
                     { isActive: false }
                 );
                 message = `${result.modifiedCount} meeting types deactivated successfully`;
@@ -489,9 +580,9 @@ const bulkUpdateMeetingTypes = async (req, res, next) => {
                     userId: req.user._id
                 });
 
-                result = await MeetingType.deleteMany({
+                result = await MeetingTypeDefinition.deleteMany({
                     _id: { $in: meetingTypeIds },
-                    userId: req.user._id
+                    createdBy: req.user._id
                 });
                 message = `${result.deletedCount} meeting types deleted successfully`;
                 break;

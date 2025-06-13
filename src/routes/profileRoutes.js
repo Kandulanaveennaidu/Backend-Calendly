@@ -1,6 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const profileController = require('../controllers/profileController');
+const dashboardController = require('../controllers/dashboardController');
 const auth = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
 
@@ -68,7 +69,7 @@ router.use(auth);
 // @route   GET /api/v1/profile/dashboard-stats
 // @desc    Get dashboard statistics (for dashboard page)
 // @access  Private
-router.get('/dashboard-stats', profileController.getDashboardStats);
+router.get('/dashboard-stats', dashboardController.getDashboardStats);
 
 // @route   GET /api/v1/profile/stats
 // @desc    Get user statistics

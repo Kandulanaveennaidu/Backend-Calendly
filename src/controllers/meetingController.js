@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
 const Meeting = require('../models/Meeting');
-const MeetingType = require('../models/MeetingType');
+const MeetingTypeDefinition = require('../models/MeetingTypeDefinition'); // Fix: Use correct model
+const notificationService = require('../services/simpleNotificationService'); // Add this
 
 // @desc    Get all meetings for user
 // @route   GET /api/v1/meetings
@@ -102,42 +103,108 @@ const getUpcomingMeetings = async (req, res, next) => {
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
 
+        // Build filter object
         const filter = {
-            userId: req.user._id,
+            $or: [
+                { createdBy: req.user._id },
+                { userId: req.user._id }
+            ],
             scheduledAt: { $gte: new Date() },
-            status: { $in: ['scheduled', 'confirmed'] }
+            status: { $in: ['confirmed', 'pending', 'scheduled'] }
         };
 
+        // Add additional filters
+        if (req.query.status) {
+            filter.status = req.query.status;
+        }
+
+        if (req.query.dateFrom) {
+            filter.scheduledAt.$gte = new Date(req.query.dateFrom);
+        }
+
+        if (req.query.dateTo) {
+            const dateTo = new Date(req.query.dateTo);
+            dateTo.setHours(23, 59, 59, 999);
+            filter.scheduledAt.$lte = dateTo;
+        }
+
+        if (req.query.meetingTypeId) {
+            filter.meetingType = req.query.meetingTypeId;
+        }
+
         const meetings = await Meeting.find(filter)
-            .populate('meetingTypeId', 'name color duration')
+            .populate({
+                path: 'meetingType',
+                select: '_id name color'
+            })
             .sort({ scheduledAt: 1 })
             .skip(skip)
-            .limit(limit);
+            .limit(limit)
+            .lean({ virtuals: true });
 
         const total = await Meeting.countDocuments(filter);
-        const hasMore = skip + meetings.length < total;
+        const pages = Math.ceil(total / limit);
+        const hasMore = page < pages;
 
-        // Format meetings for frontend
-        const formattedMeetings = meetings.map(meeting => ({
-            id: meeting._id,
-            title: meeting.title,
-            date: meeting.formattedDate,
-            time: meeting.formattedTime,
-            attendees: meeting.attendeeCount,
-            status: meeting.status,
-            meetingType: meeting.meetingTypeId
-        }));
+        // Get current date for convenience calculations
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+
+        // Format meetings according to specified structure
+        const formattedMeetings = meetings.map(meeting => {
+            const scheduledDate = new Date(meeting.scheduledAt);
+            const scheduledDateString = scheduledDate.toISOString().split('T')[0];
+            const scheduledTimeString = scheduledDate.toTimeString().slice(0, 5); // HH:MM format
+
+            // Calculate convenience fields
+            const meetingDateOnly = new Date(scheduledDate);
+            meetingDateOnly.setHours(0, 0, 0, 0);
+
+            const isToday = meetingDateOnly.getTime() === today.getTime();
+            const isTomorrow = meetingDateOnly.getTime() === tomorrow.getTime();
+            const daysFromNow = Math.ceil((meetingDateOnly - today) / (1000 * 60 * 60 * 24));
+
+            return {
+                _id: meeting._id,
+                title: meeting.title,
+                description: meeting.description || '',
+                duration: meeting.duration,
+                scheduledDate: scheduledDateString,
+                scheduledTime: scheduledTimeString,
+                scheduledDateTime: meeting.scheduledAt.toISOString(),
+                status: meeting.status,
+                meetingType: meeting.meetingType ? {
+                    _id: meeting.meetingType._id,
+                    name: meeting.meetingType.name,
+                    color: meeting.meetingType.color
+                } : null,
+                attendees: meeting.attendees.map(attendee => ({
+                    name: attendee.name,
+                    email: attendee.email,
+                    status: attendee.status
+                })),
+                attendeeCount: meeting.attendees ? meeting.attendees.length : 0,
+                meetingLink: meeting.meetingLink || null,
+                createdAt: meeting.createdAt.toISOString(),
+                updatedAt: meeting.updatedAt.toISOString(),
+                isToday: isToday,
+                isTomorrow: isTomorrow,
+                daysFromNow: daysFromNow
+            };
+        });
 
         res.json({
             success: true,
             data: {
                 meetings: formattedMeetings,
                 pagination: {
-                    page,
-                    limit,
-                    total,
-                    hasMore,
-                    pages: Math.ceil(total / limit)
+                    page: page,
+                    pages: pages,
+                    total: total,
+                    hasMore: hasMore,
+                    limit: limit
                 }
             }
         });
@@ -186,10 +253,10 @@ const createMeeting = async (req, res, next) => {
             });
         }
 
-        // Verify meeting type belongs to user
-        const meetingType = await MeetingType.findOne({
+        // Fix: Use MeetingTypeDefinition instead of MeetingType
+        const meetingType = await MeetingTypeDefinition.findOne({
             _id: req.body.meetingTypeId,
-            userId: req.user._id
+            createdBy: req.user._id
         });
 
         if (!meetingType) {
@@ -199,12 +266,44 @@ const createMeeting = async (req, res, next) => {
             });
         }
 
+        // Handle date and time combination
+        let scheduledAt;
+        let meetingDate;
+
+        if (req.body.date && req.body.time) {
+            // Combine date and time into a proper DateTime
+            const dateStr = req.body.date; // Expected format: "2024-02-01"
+            const timeStr = req.body.time; // Expected format: "14:30"
+
+            meetingDate = dateStr; // Store the date separately
+            scheduledAt = new Date(`${dateStr}T${timeStr}:00.000Z`);
+
+            // Validate the date is in the future
+            if (scheduledAt <= new Date()) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Meeting date must be in the future'
+                });
+            }
+        } else if (req.body.scheduledAt) {
+            // Use existing scheduledAt if provided
+            scheduledAt = new Date(req.body.scheduledAt);
+            meetingDate = scheduledAt.toISOString().split('T')[0]; // Extract date from scheduledAt
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: 'Either date/time or scheduledAt is required'
+            });
+        }
+
         const meetingData = {
             ...req.body,
-            userId: req.user._id,
-            duration: req.body.duration || meetingType.duration,
+            createdBy: req.user._id, // Use createdBy for consistency
+            scheduledAt: scheduledAt,
+            date: meetingDate,
+            duration: req.body.duration || meetingType.defaultDuration,
             organizer: {
-                name: req.user.fullName,
+                name: req.user.fullName || req.user.name || 'Unknown',
                 email: req.user.email
             }
         };
@@ -215,14 +314,48 @@ const createMeeting = async (req, res, next) => {
         await meetingType.incrementBookings();
 
         const populatedMeeting = await Meeting.findById(meeting._id)
-            .populate('meetingTypeId', 'name color duration');
+            .populate('meetingType', 'name color defaultDuration availableDate'); // Fix: Populate correct fields
+
+        // Format meeting data for notification
+        const formattedMeeting = {
+            _id: populatedMeeting._id,
+            title: populatedMeeting.title,
+            date: meetingDate || populatedMeeting.formattedDate, // Use stored date or virtual
+            time: populatedMeeting.formattedTime,
+            scheduledAt: populatedMeeting.scheduledAt, // Include full datetime
+            duration: populatedMeeting.duration,
+            attendeeCount: populatedMeeting.attendeeCount,
+            meetingType: populatedMeeting.meetingType
+        };
+
+        // Send real-time notification
+        try {
+            notificationService.sendMeetingCreated(req.user._id, formattedMeeting);
+        } catch (notificationError) {
+            console.log('Notification error:', notificationError.message);
+            // Don't fail the meeting creation if notification fails
+        }
+
+        console.log('Meeting created successfully:', {
+            meetingId: meeting._id,
+            userId: req.user._id,
+            title: meeting.title
+        });
 
         res.status(201).json({
             success: true,
             message: 'Meeting created successfully',
-            data: { meeting: populatedMeeting }
+            data: {
+                meeting: {
+                    ...populatedMeeting.toObject(),
+                    date: meetingDate,
+                    formattedDate: meetingDate,
+                },
+                notification: 'Real-time notification sent'
+            }
         });
     } catch (error) {
+        console.error('Meeting creation error:', error);
         next(error);
     }
 };
@@ -282,7 +415,7 @@ const deleteMeeting = async (req, res, next) => {
         }
 
         // Decrement booking count for meeting type
-        const meetingType = await MeetingType.findById(meeting.meetingTypeId);
+        const meetingType = await MeetingTypeDefinition.findById(meeting.meetingTypeId);
         if (meetingType) {
             await meetingType.decrementBookings();
         }

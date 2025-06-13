@@ -8,6 +8,8 @@ const rateLimit = require('express-rate-limit');
 const { API_VERSION } = require('./config/config');
 const errorHandler = require('./middleware/errorHandler');
 const routes = require('./routes');
+const meetingRoutes = require('./routes/meetingRoutes');
+const demoRoutes = require('./routes/demoRoutes');
 
 const app = express();
 
@@ -48,6 +50,12 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use(`/api/${API_VERSION}`, routes);
+
+// Mount the meeting routes (these will be under /api/v1/meetings via routes/index.js)
+app.use('/api/meetings', meetingRoutes);
+
+// Add demo routes for testing notifications  
+app.use('/api/demo', demoRoutes);
 
 // 404 handler
 app.all('*', (req, res) => {

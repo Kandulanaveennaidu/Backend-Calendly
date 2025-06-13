@@ -57,23 +57,38 @@ const createMeetingTypeValidation = [
         .isLength({ max: 500 })
         .withMessage('Description cannot exceed 500 characters'),
     body('duration')
+        .optional()
         .isInt({ min: 5, max: 480 })
         .withMessage('Duration must be between 5 and 480 minutes'),
+    body('defaultDuration')
+        .optional()
+        .isInt({ min: 5, max: 480 })
+        .withMessage('Default duration must be between 5 and 480 minutes'),
     body('color')
+        .optional()
         .matches(/^#([0-9A-F]{3}){1,2}$/i)
         .withMessage('Color must be a valid hex color code'),
-    body('settings.bufferTimeBefore')
+    // ✅ Add availableDate validation
+    body('availableDate')
+        .isISO8601()
+        .withMessage('Available date must be in YYYY-MM-DD format')
+        .custom((value) => {
+            const date = new Date(value);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (date < today) {
+                throw new Error('Available date must be today or in the future');
+            }
+            return true;
+        }),
+    body('availableDays')
         .optional()
-        .isInt({ min: 0, max: 60 })
-        .withMessage('Buffer time before must be between 0 and 60 minutes'),
-    body('settings.bufferTimeAfter')
+        .isArray()
+        .withMessage('Available days must be an array'),
+    body('availableTimeSlots')
         .optional()
-        .isInt({ min: 0, max: 60 })
-        .withMessage('Buffer time after must be between 0 and 60 minutes'),
-    body('settings.maxAdvanceBooking')
-        .optional()
-        .isInt({ min: 1 })
-        .withMessage('Max advance booking must be at least 1 day')
+        .isArray()
+        .withMessage('Available time slots must be an array')
 ];
 
 // Validation for updating meeting type

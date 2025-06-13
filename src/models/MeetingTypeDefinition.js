@@ -33,6 +33,20 @@ const meetingTypeDefinitionSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    // User-selected availability date field
+    availableDate: {
+        type: Date,
+        required: [true, 'Available date is required'],
+        index: true // Add index for efficient filtering
+    },
+    // Virtual field for formatted date (YYYY-MM-DD)
+    formattedAvailableDate: {
+        type: String,
+        get: function () {
+            if (!this.availableDate) return null;
+            return this.availableDate.toISOString().split('T')[0];
+        }
+    },
     // Calendar Integration Fields
     availableDays: [{
         type: Number,
@@ -102,44 +116,68 @@ const meetingTypeDefinitionSchema = new mongoose.Schema({
         required: true
     }
 }, {
-    timestamps: true
+    timestamps: true,
+    toJSON: { virtuals: true }, // Include virtuals in JSON output
+    toObject: { virtuals: true }
 });
 
 // Index for efficient queries
 meetingTypeDefinitionSchema.index({ isActive: 1 });
 meetingTypeDefinitionSchema.index({ createdBy: 1 });
 meetingTypeDefinitionSchema.index({ availableDays: 1 });
+meetingTypeDefinitionSchema.index({ availableDate: 1 }); // Add index for date filtering
+meetingTypeDefinitionSchema.index({ createdBy: 1, availableDate: 1 }); // Compound index
+
+// Virtual for formatted available date
+meetingTypeDefinitionSchema.virtual('dateFormatted').get(function () {
+    if (!this.availableDate) return null;
+    return this.availableDate.toISOString().split('T')[0]; // Returns YYYY-MM-DD format
+});
 
 // Method to check if meeting type is available on a specific day
-meetingTypeDefinitionSchema.methods.isAvailableOnDay = function(dayOfWeek) {
+meetingTypeDefinitionSchema.methods.isAvailableOnDay = function (dayOfWeek) {
     return this.availableDays.includes(dayOfWeek);
 };
 
+// Method to check if meeting type is available on the selected date
+meetingTypeDefinitionSchema.methods.isAvailableOnDate = function (date) {
+    const selectedDate = new Date(date);
+    const availableDate = new Date(this.availableDate);
+
+    // Compare dates (ignore time)
+    return selectedDate.toDateString() === availableDate.toDateString();
+};
+
 // Method to get available time slots for a specific day
-meetingTypeDefinitionSchema.methods.getAvailableSlots = function(date, existingMeetings = []) {
+meetingTypeDefinitionSchema.methods.getAvailableSlots = function (date, existingMeetings = []) {
+    // Check if the requested date matches the available date
+    if (!this.isAvailableOnDate(date)) {
+        return [];
+    }
+
     const dayOfWeek = new Date(date).getDay();
-    
+
     if (!this.isAvailableOnDay(dayOfWeek)) {
         return [];
     }
-    
+
     const slots = [];
-    
+
     this.availableTimeSlots.forEach(timeSlot => {
         const [startHour, startMin] = timeSlot.start.split(':').map(Number);
         const [endHour, endMin] = timeSlot.end.split(':').map(Number);
-        
+
         const startTime = startHour * 60 + startMin;
         const endTime = endHour * 60 + endMin;
-        
+
         for (let time = startTime; time + this.defaultDuration <= endTime; time += this.defaultDuration + this.bufferTime) {
             const slotStart = `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
             const slotEnd = `${Math.floor((time + this.defaultDuration) / 60).toString().padStart(2, '0')}:${((time + this.defaultDuration) % 60).toString().padStart(2, '0')}`;
-            
+
             const isBooked = existingMeetings.some(meeting => {
                 return meeting.time === slotStart && meeting.date === date;
             });
-            
+
             slots.push({
                 start: slotStart,
                 end: slotEnd,
@@ -148,8 +186,22 @@ meetingTypeDefinitionSchema.methods.getAvailableSlots = function(date, existingM
             });
         }
     });
-    
+
     return slots;
+};
+
+// Method to increment bookings
+meetingTypeDefinitionSchema.methods.incrementBookings = async function () {
+    this.totalBookings += 1;
+    return this.save();
+};
+
+// Method to decrement bookings
+meetingTypeDefinitionSchema.methods.decrementBookings = async function () {
+    if (this.totalBookings > 0) {
+        this.totalBookings -= 1;
+    }
+    return this.save();
 };
 
 module.exports = mongoose.model('MeetingTypeDefinition', meetingTypeDefinitionSchema);
