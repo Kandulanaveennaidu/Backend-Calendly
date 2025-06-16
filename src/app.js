@@ -10,6 +10,7 @@ const errorHandler = require('./middleware/errorHandler');
 const routes = require('./routes');
 const meetingRoutes = require('./routes/meetingRoutes');
 const demoRoutes = require('./routes/demoRoutes');
+const publicScheduleRoutes = require('./routes/publicScheduleRoutes');
 
 const app = express();
 
@@ -56,6 +57,9 @@ app.use('/api/meetings', meetingRoutes);
 
 // Add demo routes for testing notifications  
 app.use('/api/demo', demoRoutes);
+
+// Add public schedule routes
+app.use('/api/v1/public-schedule', publicScheduleRoutes);
 
 // 404 handler
 app.all('*', (req, res) => {

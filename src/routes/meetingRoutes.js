@@ -166,4 +166,132 @@ router.delete('/:id', meetingIdValidation, meetingController.deleteMeeting);
 // @access  Private
 router.patch('/:id/status', [...meetingIdValidation, ...statusUpdateValidation], meetingController.updateMeetingStatus);
 
+// Public routes
+// GET /api/v1/meetings/public/:meetingTypeId/slots?date=YYYY-MM-DD
+router.get('/public/:meetingTypeId/slots', async (req, res, next) => {
+    try {
+        const { meetingTypeId } = req.params;
+        const { date } = req.query;
+        if (!date) {
+            return res.status(400).json({ success: false, message: 'Date parameter is required (YYYY-MM-DD)' });
+        }
+        const meetingType = await MeetingTypeDefinition.findById(meetingTypeId);
+        if (!meetingType) {
+            return res.status(404).json({ success: false, message: 'Meeting type not found' });
+        }
+        // Get existing bookings for the date
+        const existingMeetings = await Meeting.find({
+            meetingTypeId: meetingTypeId,
+            date: date,
+            status: { $nin: ['cancelled'] }
+        }).select('time');
+        const bookedSlots = existingMeetings.map(m => m.time);
+        // Generate all possible slots
+        const slots = [];
+        meetingType.availableTimeSlots.forEach(slot => {
+            const [startHour, startMin] = slot.start.split(':').map(Number);
+            const [endHour, endMin] = slot.end.split(':').map(Number);
+            const startTime = startHour * 60 + startMin;
+            const endTime = endHour * 60 + endMin;
+            for (let time = startTime; time + meetingType.defaultDuration <= endTime; time += meetingType.defaultDuration) {
+                const hours = Math.floor(time / 60);
+                const minutes = time % 60;
+                const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+                slots.push(timeString);
+            }
+        });
+        const availableSlots = slots.filter(slot => !bookedSlots.includes(slot));
+        res.json({
+            success: true,
+            data: {
+                availableSlots,
+                bookedSlots
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// POST /api/v1/meetings/public
+router.post('/public', async (req, res, next) => {
+    try {
+        const { meetingTypeId, meetingOwnerId, title, date, time, guestInfo } = req.body;
+        if (!meetingTypeId || !meetingOwnerId || !date || !time || !guestInfo) {
+            return res.status(400).json({ success: false, message: 'Missing required fields' });
+        }
+        const meetingType = await MeetingTypeDefinition.findOne({ _id: meetingTypeId, createdBy: meetingOwnerId, isActive: true });
+        if (!meetingType) {
+            return res.status(404).json({ success: false, message: 'Meeting type not found' });
+        }
+        // Check if slot is still available
+        const existingMeeting = await Meeting.findOne({
+            meetingTypeId: meetingTypeId,
+            date: date,
+            time: time,
+            status: { $nin: ['cancelled'] }
+        });
+        if (existingMeeting) {
+            return res.status(409).json({ success: false, message: 'This time slot is no longer available' });
+        }
+        const scheduledAt = new Date(`${date}T${time}:00.000Z`);
+        const meeting = await Meeting.create({
+            meetingTypeId,
+            meetingOwnerId,
+            title: title || `${meetingType.name} with ${guestInfo.name}`,
+            date,
+            time,
+            duration: meetingType.defaultDuration,
+            guestInfo,
+            status: 'confirmed',
+            scheduledAt
+        });
+        await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
+        res.status(201).json({
+            success: true,
+            data: {
+                _id: meeting._id,
+                meetingTypeId: meeting.meetingTypeId,
+                meetingOwnerId: meeting.meetingOwnerId,
+                title: meeting.title,
+                date: meeting.date,
+                time: meeting.time,
+                duration: meeting.duration,
+                guestInfo: meeting.guestInfo,
+                status: meeting.status,
+                createdAt: meeting.createdAt
+            },
+            message: 'Booking created successfully!'
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Public: Get all bookings for a meeting type
+router.get('/public/:meetingTypeId/bookings', async (req, res, next) => {
+    try {
+        const { meetingTypeId } = req.params;
+        const bookings = await require('../models/Meeting').find({
+            meetingTypeId,
+            status: { $nin: ['cancelled'] }
+        }).sort({ date: 1, time: 1 }).lean();
+
+        res.json({
+            success: true,
+            data: bookings.map(b => ({
+                id: b._id,
+                title: b.title,
+                date: b.date,
+                time: b.time,
+                guestInfo: b.guestInfo,
+                status: b.status,
+                createdAt: b.createdAt
+            }))
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
 module.exports = router;

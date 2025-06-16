@@ -3,6 +3,7 @@ const { body, param, query } = require('express-validator');
 const meetingTypeController = require('../controllers/meetingTypeController');
 const auth = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
+const MeetingTypeDefinition = require('../models/MeetingTypeDefinition');
 
 const router = express.Router();
 
@@ -235,5 +236,37 @@ router.get('/:id/bookings', meetingTypeIdValidation, [
         .isIn(['scheduled', 'confirmed', 'cancelled', 'completed', 'no-show'])
         .withMessage('Invalid status')
 ], meetingTypeController.getMeetingTypeBookings);
+
+// @route   GET /api/v1/meeting-types/public/:meetingTypeId
+// @desc    Get public details of a meeting type
+// @access  Public
+router.get('/public/:meetingTypeId', async (req, res, next) => {
+    try {
+        const { meetingTypeId } = req.params;
+        const meetingType = await MeetingTypeDefinition.findById(meetingTypeId).lean();
+        if (!meetingType) {
+            return res.status(404).json({ success: false, message: 'Meeting type not found' });
+        }
+        res.json({
+            success: true,
+            data: {
+                _id: meetingType._id,
+                userId: meetingType.createdBy,
+                name: meetingType.name,
+                description: meetingType.description,
+                duration: meetingType.defaultDuration,
+                color: meetingType.color,
+                isActive: meetingType.isActive,
+                availableDays: meetingType.availableDays,
+                availableTimeSlots: meetingType.availableTimeSlots,
+                availableDate: meetingType.availableDate,
+                createdAt: meetingType.createdAt,
+                updatedAt: meetingType.updatedAt
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 module.exports = router;
