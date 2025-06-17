@@ -3,6 +3,9 @@ const { body, param, query } = require('express-validator');
 const meetingController = require('../controllers/meetingController');
 const auth = require('../middleware/auth');
 const rateLimit = require('express-rate-limit');
+const MeetingTypeDefinition = require('../models/MeetingTypeDefinition');
+const Meeting = require('../models/Meeting');
+const moment = require('moment-timezone');
 
 const router = express.Router();
 
@@ -128,8 +131,50 @@ const statusUpdateValidation = [
         .withMessage('Invalid status')
 ];
 
-// All routes require authentication
-router.use(auth);
+// PUBLIC ROUTES FIRST (no auth required)
+// Get Meeting Type Details (Public)
+router.get('/public/:meetingTypeId', async (req, res, next) => {
+    try {
+        const { meetingTypeId } = req.params;
+
+        // Check if meetingTypeId is valid
+        if (!meetingTypeId || meetingTypeId === 'undefined') {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid meetingTypeId is required'
+            });
+        }
+
+        const mt = await MeetingTypeDefinition.findById(meetingTypeId)
+            .populate('createdBy', 'email')
+            .lean();
+
+        if (!mt) {
+            return res.status(404).json({
+                success: false,
+                message: 'Meeting type not found.'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                id: mt._id,
+                name: mt.name,
+                description: mt.description,
+                duration: mt.defaultDuration,
+                color: mt.color,
+                isActive: mt.isActive,
+                email: mt.createdBy?.email || null
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
 
 // @route   GET /api/v1/meetings
 // @desc    Get all meetings for user
@@ -213,58 +258,138 @@ router.get('/public/:meetingTypeId/slots', async (req, res, next) => {
     }
 });
 
-// POST /api/v1/meetings/public
-router.post('/public', async (req, res, next) => {
+// Get Available Times with Timezone Support (Public)
+router.get('/public/:meetingTypeId/available-times', async (req, res, next) => {
     try {
-        const { meetingTypeId, meetingOwnerId, title, date, time, guestInfo } = req.body;
-        if (!meetingTypeId || !meetingOwnerId || !date || !time || !guestInfo) {
-            return res.status(400).json({ success: false, message: 'Missing required fields' });
+        const { meetingTypeId } = req.params;
+        const { date, timezone = 'UTC' } = req.query;
+
+        const mt = await MeetingTypeDefinition.findById(meetingTypeId).lean();
+        if (!mt) {
+            return res.status(404).json({ success: false, message: 'Meeting type not found.' });
         }
-        const meetingType = await MeetingTypeDefinition.findOne({ _id: meetingTypeId, createdBy: meetingOwnerId, isActive: true });
-        if (!meetingType) {
-            return res.status(404).json({ success: false, message: 'Meeting type not found' });
+
+        if (!date) {
+            return res.status(400).json({ success: false, message: 'Date is required.' });
         }
-        // Check if slot is still available
-        const existingMeeting = await Meeting.findOne({
-            meetingTypeId: meetingTypeId,
-            date: date,
-            time: time,
-            status: { $nin: ['cancelled'] }
-        });
-        if (existingMeeting) {
-            return res.status(409).json({ success: false, message: 'This time slot is no longer available' });
-        }
-        const scheduledAt = new Date(`${date}T${time}:00.000Z`);
-        const meeting = await Meeting.create({
+
+        // Get booked times for this date
+        const meetings = await Meeting.find({
             meetingTypeId,
-            meetingOwnerId,
-            title: title || `${meetingType.name} with ${guestInfo.name}`,
             date,
-            time,
-            duration: meetingType.defaultDuration,
-            guestInfo,
-            status: 'confirmed',
-            scheduledAt
+            status: { $nin: ['cancelled'] }
+        }).select('time');
+        const bookedTimes = meetings.map(m => m.time);
+
+        // Generate available slots with timezone conversion
+        const times = [];
+        mt.availableTimeSlots.forEach(slot => {
+            const slotTimezone = slot.timezone || mt.timezone;
+
+            // Convert slot times to requested timezone
+            const startMoment = moment.tz(`${date} ${slot.start}`, 'YYYY-MM-DD HH:mm', slotTimezone);
+            const endMoment = moment.tz(`${date} ${slot.end}`, 'YYYY-MM-DD HH:mm', slotTimezone);
+
+            // Convert to requested timezone
+            const convertedStart = startMoment.clone().tz(timezone);
+            const convertedEnd = endMoment.clone().tz(timezone);
+
+            // Generate slots in requested timezone
+            let current = convertedStart.clone();
+            while (current.isBefore(convertedEnd.subtract(mt.defaultDuration, 'minutes'))) {
+                const timeString = current.format('HH:mm');
+                if (!bookedTimes.includes(timeString)) {
+                    times.push(timeString);
+                }
+                current.add(mt.defaultDuration, 'minutes');
+            }
         });
-        await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
-        res.status(201).json({
+
+        res.json({
             success: true,
             data: {
-                _id: meeting._id,
-                meetingTypeId: meeting.meetingTypeId,
-                meetingOwnerId: meeting.meetingOwnerId,
-                title: meeting.title,
-                date: meeting.date,
-                time: meeting.time,
-                duration: meeting.duration,
-                guestInfo: meeting.guestInfo,
-                status: meeting.status,
-                createdAt: meeting.createdAt
-            },
-            message: 'Booking created successfully!'
+                times,
+                timezone,
+                originalTimezone: mt.timezone
+            }
         });
     } catch (error) {
-        next(error);
+        res.status(500).json({ success: false, message: 'Error fetching available times.' });
+    }
+});
+
+// Create Booking with Timezone Support (Public)
+router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
+    try {
+        const { meetingTypeId } = req.params;
+        const { date, time, timezone = 'UTC', guestInfo } = req.body;
+
+        if (!meetingTypeId || !date || !time || !guestInfo || !guestInfo.name || !guestInfo.email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: meetingTypeId, date, time, guestInfo'
+            });
+        }
+
+        const mt = await MeetingTypeDefinition.findById(meetingTypeId).lean();
+        if (!mt) {
+            return res.status(404).json({
+                success: false,
+                message: 'Meeting type not found.'
+            });
+        }
+
+        // Convert booking time to meeting type's timezone for storage
+        const bookingMoment = moment.tz(`${date} ${time}`, 'YYYY-MM-DD HH:mm', timezone);
+        const storageTime = bookingMoment.clone().tz(mt.timezone).format('HH:mm');
+        const storageDate = bookingMoment.clone().tz(mt.timezone).format('YYYY-MM-DD');
+
+        // Check if slot is available in storage timezone
+        const existingMeeting = await Meeting.findOne({
+            meetingTypeId,
+            date: storageDate,
+            time: storageTime,
+            status: { $nin: ['cancelled'] }
+        });
+
+        if (existingMeeting) {
+            return res.status(409).json({ success: false, message: 'Time slot no longer available.' });
+        }
+
+        // Create booking with timezone info
+        const meeting = await Meeting.create({
+            meetingTypeId,
+            meetingOwnerId: mt.createdBy,
+            userId: mt.createdBy,
+            title: `${mt.name} with ${guestInfo.name}`,
+            date: storageDate,
+            time: storageTime,
+            duration: mt.defaultDuration,
+            guestInfo,
+            status: 'confirmed',
+            scheduledAt: bookingMoment.toDate(),
+            timezone: timezone, // Store guest's timezone
+            organizer: {
+                name: mt.organizer?.name || 'Meeting Organizer',
+                email: mt.organizer?.email || 'no-reply@example.com'
+            }
+        });
+
+        await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
+
+        res.status(201).json({
+            success: true,
+            message: 'Meeting scheduled successfully!',
+            data: {
+                bookingId: meeting._id,
+                confirmedDate: date,
+                confirmedTime: time,
+                timezone: timezone,
+                meetingName: mt.name
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error creating booking.' });
     }
 });
 
@@ -293,5 +418,8 @@ router.get('/public/:meetingTypeId/bookings', async (req, res, next) => {
         next(error);
     }
 });
+
+// All routes require authentication
+router.use(auth);
 
 module.exports = router;

@@ -9,6 +9,7 @@ const meetingTypeRoutes = require('./meetingTypeRoutes');
 const meetingRoutes = require('./meetingRoutes');
 const calendarRoutes = require('./calendarRoutes');
 const dashboardRoutes = require('./dashboardRoutes');
+const timezoneRoutes = require('./timezoneRoutes');
 
 // Use routes with proper middleware
 router.use('/auth', authRoutes);
@@ -18,6 +19,7 @@ router.use('/meeting-types', meetingTypeRoutes);
 router.use('/meetings', meetingRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/dashboard', dashboardRoutes); // Remove auth middleware for now
+router.use('/timezones', timezoneRoutes);
 
 // API documentation endpoint
 router.get('/', (req, res) => {
@@ -95,6 +97,9 @@ router.get('/', (req, res) => {
       dashboard: {
         getStats: 'GET /api/v1/dashboard/stats',
         getRecentActivity: 'GET /api/v1/dashboard/recent-activity'
+      },
+      timezones: {
+        getAll: 'GET /api/v1/timezones'
       }
     },
     instructions: {
@@ -120,7 +125,8 @@ router.get('/health', (req, res) => {
       meetings: 'Available',
       users: 'Available',
       calendar: 'Available',
-      dashboard: 'Available'
+      dashboard: 'Available',
+      timezones: 'Available'
     }
   });
 });

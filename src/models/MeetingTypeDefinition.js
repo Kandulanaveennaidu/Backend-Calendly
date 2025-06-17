@@ -54,6 +54,7 @@ const meetingTypeDefinitionSchema = new mongoose.Schema({
         max: 6,
         default: [1, 2, 3, 4, 5] // Monday to Friday
     }],
+    // Updated availableTimeSlots with timezone
     availableTimeSlots: [{
         start: {
             type: String,
@@ -64,11 +65,16 @@ const meetingTypeDefinitionSchema = new mongoose.Schema({
             type: String,
             required: true,
             match: [/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, 'End time must be in HH:MM format']
+        },
+        timezone: {
+            type: String,
+            default: function () { return this.parent().timezone; }
         }
     }],
     timezone: {
         type: String,
-        default: 'UTC'
+        default: 'UTC',
+        required: true
     },
     bufferTime: {
         type: Number,

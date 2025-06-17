@@ -186,8 +186,12 @@ const createMeetingType = async (req, res, next) => {
 
             // Calendar Integration Fields
             availableDays: req.body.availableDays || [1, 2, 3, 4, 5],
-            availableTimeSlots: req.body.availableTimeSlots || [],
-            timezone: req.body.timezone || 'UTC',
+            availableTimeSlots: req.body.availableTimeSlots?.map(slot => ({
+                start: slot.start,
+                end: slot.end,
+                timezone: slot.timezone || req.body.timezone || 'UTC' // NEW FIELD
+            })) || [{ start: "09:00", end: "17:00", timezone: req.body.timezone || 'UTC' }],
+            timezone: req.body.timezone || 'UTC', // NEW FIELD
             bufferTime: req.body.bufferTime || 0,
             maxBookingsPerDay: req.body.maxBookingsPerDay || 10,
             advanceBookingDays: req.body.advanceBookingDays || 30,
