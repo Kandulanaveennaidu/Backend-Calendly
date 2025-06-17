@@ -354,9 +354,7 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
 
         if (existingMeeting) {
             return res.status(409).json({ success: false, message: 'Time slot no longer available.' });
-        }
-
-        // Create booking with timezone info
+        }        // Create booking with timezone info
         const meeting = await Meeting.create({
             meetingTypeId,
             meetingOwnerId: mt.createdBy,
@@ -364,6 +362,8 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
             title: `${mt.name} with ${guestInfo.name}`,
             date: storageDate,
             time: storageTime,
+            originalDate: date, // Store original guest date
+            originalTime: time, // Store original guest time
             duration: mt.defaultDuration,
             guestInfo,
             status: 'confirmed',
@@ -397,22 +397,49 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
 router.get('/public/:meetingTypeId/bookings', async (req, res, next) => {
     try {
         const { meetingTypeId } = req.params;
-        const bookings = await require('../models/Meeting').find({
+
+        // Get meeting type to know its timezone
+        const meetingType = await MeetingTypeDefinition.findById(meetingTypeId);
+        if (!meetingType) {
+            return res.status(404).json({ success: false, message: 'Meeting type not found' });
+        }
+
+        const bookings = await Meeting.find({
             meetingTypeId,
             status: { $nin: ['cancelled'] }
         }).sort({ date: 1, time: 1 }).lean();
 
         res.json({
             success: true,
-            data: bookings.map(b => ({
-                id: b._id,
-                title: b.title,
-                date: b.date,
-                time: b.time,
-                guestInfo: b.guestInfo,
-                status: b.status,
-                createdAt: b.createdAt
-            }))
+            data: bookings.map(b => {
+                // Use stored original values if available, otherwise convert
+                let confirmedTime = b.originalTime || b.time;
+                let confirmedDate = b.originalDate || b.date;
+
+                // If no original values stored, convert from meeting type timezone to guest timezone
+                if (!b.originalTime && b.timezone && b.timezone !== meetingType.timezone) {
+                    const storedMoment = moment.tz(`${b.date} ${b.time}`, 'YYYY-MM-DD HH:mm', meetingType.timezone);
+                    const guestMoment = storedMoment.tz(b.timezone);
+                    confirmedTime = guestMoment.format('HH:mm');
+                    confirmedDate = guestMoment.format('YYYY-MM-DD');
+                }
+
+                return {
+                    id: b._id,
+                    title: b.title,
+                    date: confirmedDate,
+                    time: confirmedTime, // This will now show the guest's original time
+                    confirmedTime: confirmedTime, // Keep for backward compatibility
+                    confirmedDate: confirmedDate, // Keep for backward compatibility
+                    timezone: b.timezone || meetingType.timezone,
+                    storageTime: b.time, // Time in meeting type's timezone (for internal use)
+                    storageDate: b.date, // Date in meeting type's timezone (for internal use)
+                    guestInfo: b.guestInfo,
+                    status: b.status,
+                    duration: b.duration,
+                    createdAt: b.createdAt
+                };
+            })
         });
     } catch (error) {
         next(error);

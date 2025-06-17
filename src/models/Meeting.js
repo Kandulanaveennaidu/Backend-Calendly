@@ -37,11 +37,18 @@ const meetingSchema = new mongoose.Schema({
         type: String, // Store date in YYYY-MM-DD format
         required: true,
         match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format']
-    },
-    time: {
-        type: String, // Store time in HH:MM format
+    }, time: {
+        type: String, // Store time in HH:MM format (in meeting type's timezone)
         required: true,
         match: [/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Time must be in HH:MM format']
+    },
+    originalTime: {
+        type: String, // Store original time from guest's timezone
+        match: [/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Time must be in HH:MM format']
+    },
+    originalDate: {
+        type: String, // Store original date from guest's timezone
+        match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format']
     },
     duration: {
         type: Number,
