@@ -46,15 +46,13 @@ const getMeetings = async (req, res, next) => {
             .limit(limit);
 
         const total = await Meeting.countDocuments(filter);
-        const hasMore = skip + meetings.length < total;
-
-        // Format meetings for frontend
+        const hasMore = skip + meetings.length < total;        // Format meetings for frontend
         const formattedMeetings = meetings.map(meeting => ({
             id: meeting._id,
             title: meeting.title,
             description: meeting.description,
-            date: meeting.formattedDate,
-            time: meeting.formattedTime,
+            date: meeting.date || meeting.formattedDate, // Use stored date field first
+            time: meeting.time || meeting.formattedTime, // Use stored time field first
             duration: meeting.duration,
             attendees: meeting.attendeeCount,
             confirmedAttendees: meeting.confirmedAttendeeCount,
@@ -63,6 +61,7 @@ const getMeetings = async (req, res, next) => {
             location: meeting.location,
             notes: meeting.notes,
             timezone: meeting.timezone,
+            guestInfo: meeting.guestInfo,
             createdAt: meeting.createdAt,
             updatedAt: meeting.updatedAt
         }));
@@ -164,15 +163,13 @@ const getUpcomingMeetings = async (req, res, next) => {
 
             const isToday = meetingDateOnly.getTime() === today.getTime();
             const isTomorrow = meetingDateOnly.getTime() === tomorrow.getTime();
-            const daysFromNow = Math.ceil((meetingDateOnly - today) / (1000 * 60 * 60 * 24));
-
-            return {
+            const daysFromNow = Math.ceil((meetingDateOnly - today) / (1000 * 60 * 60 * 24)); return {
                 _id: meeting._id,
                 title: meeting.title,
                 description: meeting.description || '',
                 duration: meeting.duration,
-                scheduledDate: scheduledDateString,
-                scheduledTime: scheduledTimeString,
+                scheduledDate: meeting.date || scheduledDateString, // Use stored date field first
+                scheduledTime: meeting.time || scheduledTimeString, // Use stored time field first
                 scheduledDateTime: meeting.scheduledAt.toISOString(),
                 status: meeting.status,
                 meetingType: meeting.meetingType ? {
@@ -187,6 +184,8 @@ const getUpcomingMeetings = async (req, res, next) => {
                 })),
                 attendeeCount: meeting.attendees ? meeting.attendees.length : 0,
                 meetingLink: meeting.meetingLink || null,
+                guestInfo: meeting.guestInfo,
+                timezone: meeting.timezone,
                 createdAt: meeting.createdAt.toISOString(),
                 updatedAt: meeting.updatedAt.toISOString(),
                 isToday: isToday,
@@ -230,9 +229,32 @@ const getMeetingById = async (req, res, next) => {
             });
         }
 
+        // Format meeting to ensure time field is included
+        const formattedMeeting = {
+            id: meeting._id,
+            title: meeting.title,
+            description: meeting.description,
+            date: meeting.date || meeting.formattedDate,
+            time: meeting.time || meeting.formattedTime,
+            duration: meeting.duration,
+            scheduledAt: meeting.scheduledAt,
+            status: meeting.status,
+            attendees: meeting.attendees,
+            attendeeCount: meeting.attendeeCount,
+            confirmedAttendeeCount: meeting.confirmedAttendeeCount,
+            organizer: meeting.organizer,
+            location: meeting.location,
+            notes: meeting.notes,
+            timezone: meeting.timezone,
+            guestInfo: meeting.guestInfo,
+            meetingType: meeting.meetingTypeId,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.updatedAt
+        };
+
         res.json({
             success: true,
-            data: { meeting }
+            data: { meeting: formattedMeeting }
         });
     } catch (error) {
         next(error);
@@ -294,13 +316,13 @@ const createMeeting = async (req, res, next) => {
                 success: false,
                 message: 'Either date/time or scheduledAt is required'
             });
-        }
-
-        const meetingData = {
+        } const meetingData = {
             ...req.body,
+            userId: req.user._id,
             createdBy: req.user._id, // Use createdBy for consistency
             scheduledAt: scheduledAt,
             date: meetingDate,
+            time: req.body.time, // Ensure time field is included
             duration: req.body.duration || meetingType.defaultDuration,
             organizer: {
                 name: req.user.fullName || req.user.name || 'Unknown',
@@ -372,9 +394,7 @@ const updateMeeting = async (req, res, next) => {
                 message: 'Validation failed',
                 errors: errors.array()
             });
-        }
-
-        const meeting = await Meeting.findOneAndUpdate(
+        } const meeting = await Meeting.findOneAndUpdate(
             { _id: req.params.id, userId: req.user._id },
             req.body,
             { new: true, runValidators: true }
@@ -387,10 +407,33 @@ const updateMeeting = async (req, res, next) => {
             });
         }
 
+        // Format meeting to ensure time field is included
+        const formattedMeeting = {
+            id: meeting._id,
+            title: meeting.title,
+            description: meeting.description,
+            date: meeting.date || meeting.formattedDate,
+            time: meeting.time || meeting.formattedTime,
+            duration: meeting.duration,
+            scheduledAt: meeting.scheduledAt,
+            status: meeting.status,
+            attendees: meeting.attendees,
+            attendeeCount: meeting.attendeeCount,
+            confirmedAttendeeCount: meeting.confirmedAttendeeCount,
+            organizer: meeting.organizer,
+            location: meeting.location,
+            notes: meeting.notes,
+            timezone: meeting.timezone,
+            guestInfo: meeting.guestInfo,
+            meetingType: meeting.meetingTypeId,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.updatedAt
+        };
+
         res.json({
             success: true,
             message: 'Meeting updated successfully',
-            data: { meeting }
+            data: { meeting: formattedMeeting }
         });
     } catch (error) {
         next(error);

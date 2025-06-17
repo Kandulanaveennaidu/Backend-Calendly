@@ -7,6 +7,11 @@ const meetingSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    meetingOwnerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
+    },
     meetingTypeId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'MeetingType',
@@ -28,18 +33,21 @@ const meetingSchema = new mongoose.Schema({
         type: Date,
         required: [true, 'Scheduled date and time is required'],
         index: true
-    },
-    date: {
+    }, date: {
         type: String, // Store date in YYYY-MM-DD format
         required: true,
         match: [/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format']
+    },
+    time: {
+        type: String, // Store time in HH:MM format
+        required: true,
+        match: [/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, 'Time must be in HH:MM format']
     },
     duration: {
         type: Number,
         required: [true, 'Duration is required'],
         min: [5, 'Minimum duration is 5 minutes']
-    },
-    attendees: [{
+    }, attendees: [{
         name: {
             type: String,
             required: true,
@@ -61,6 +69,25 @@ const meetingSchema = new mongoose.Schema({
             default: 'pending'
         }
     }],
+    guestInfo: {
+        name: {
+            type: String,
+            trim: true
+        },
+        email: {
+            type: String,
+            lowercase: true,
+            match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email']
+        },
+        phone: {
+            type: String,
+            trim: true
+        },
+        notes: {
+            type: String,
+            trim: true
+        }
+    },
     organizer: {
         name: {
             type: String,
