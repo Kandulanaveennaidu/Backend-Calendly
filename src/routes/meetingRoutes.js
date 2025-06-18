@@ -7,6 +7,7 @@ const MeetingTypeDefinition = require('../models/MeetingTypeDefinition');
 const Meeting = require('../models/Meeting');
 const moment = require('moment-timezone');
 const emailService = require('../services/emailService');
+const zoomService = require('../services/zoomService');
 
 const router = express.Router();
 
@@ -330,7 +331,12 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
                 success: false,
                 message: 'Missing required fields: meetingTypeId, date, time, guestInfo'
             });
-        }
+        } console.log('🔍 Booking request details:');
+        console.log('Meeting Type ID:', meetingTypeId);
+        console.log('Requested Date:', date);
+        console.log('Requested Time:', time);
+        console.log('Requested Timezone:', timezone);
+        console.log('Guest Info:', guestInfo);
 
         const mt = await MeetingTypeDefinition.findById(meetingTypeId).lean();
         if (!mt) {
@@ -340,10 +346,20 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
             });
         }
 
+        console.log('📋 Meeting Type Details:');
+        console.log('Name:', mt.name);
+        console.log('Meeting Type Timezone:', mt.timezone);
+        console.log('Default Duration:', mt.defaultDuration);
+
         // Convert booking time to meeting type's timezone for storage
         const bookingMoment = moment.tz(`${date} ${time}`, 'YYYY-MM-DD HH:mm', timezone);
-        const storageTime = bookingMoment.clone().tz(mt.timezone).format('HH:mm');
-        const storageDate = bookingMoment.clone().tz(mt.timezone).format('YYYY-MM-DD');
+        const storageTime = bookingMoment.clone().tz(mt.timezone || 'UTC').format('HH:mm');
+        const storageDate = bookingMoment.clone().tz(mt.timezone || 'UTC').format('YYYY-MM-DD');
+
+        console.log('🕐 Time Conversion:');
+        console.log('Storage Date:', storageDate);
+        console.log('Storage Time:', storageTime);
+        console.log('Booking Moment:', bookingMoment.format());
 
         // Check if slot is available in storage timezone
         const existingMeeting = await Meeting.findOne({
@@ -353,9 +369,21 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
             status: { $nin: ['cancelled'] }
         });
 
+        console.log('🔍 Existing Meeting Check:');
+        console.log('Query:', { meetingTypeId, date: storageDate, time: storageTime, status: { $nin: ['cancelled'] } });
+        console.log('Existing Meeting Found:', existingMeeting ? 'YES' : 'NO');
+
         if (existingMeeting) {
-            return res.status(409).json({ success: false, message: 'Time slot no longer available.' });
-        }        // Create booking with timezone info
+            console.log('❌ Conflict found with existing meeting:', existingMeeting._id);
+            return res.status(409).json({
+                success: false,
+                message: 'Time slot no longer available.',
+                debug: {
+                    requestedSlot: { date: storageDate, time: storageTime },
+                    conflictingMeeting: existingMeeting._id
+                }
+            });
+        }// Create booking with timezone info
         const meeting = await Meeting.create({
             meetingTypeId,
             meetingOwnerId: mt.createdBy,
@@ -376,9 +404,43 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
             }
         }); await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
 
-        // Send email notifications
+        // Create Zoom meeting
+        let zoomMeetingData = null;
         try {
-            // Prepare booking data for email
+            console.log('🎥 Creating Zoom meeting...');
+
+            // Prepare Zoom meeting data
+            const zoomData = {
+                topic: `${mt.name} with ${guestInfo.name}`,
+                startTime: bookingMoment.toISOString(),
+                duration: mt.defaultDuration,
+                timezone: timezone,
+                guestName: guestInfo.name,
+                guestEmail: guestInfo.email,
+                agenda: `${mt.name} meeting scheduled through the booking system.`
+            };
+
+            zoomMeetingData = await zoomService.createMeeting(zoomData);
+
+            // Update meeting with Zoom details
+            await Meeting.findByIdAndUpdate(meeting._id, {
+                $set: {
+                    zoomMeetingId: zoomMeetingData.meetingId,
+                    zoomJoinUrl: zoomMeetingData.joinUrl,
+                    zoomMeetingNumber: zoomMeetingData.meetingNumber,
+                    zoomPassword: zoomMeetingData.password,
+                    zoomStartUrl: zoomMeetingData.startUrl
+                }
+            });
+
+            console.log('✅ Zoom meeting created successfully:', zoomMeetingData.meetingNumber);
+        } catch (zoomError) {
+            console.error('❌ Failed to create Zoom meeting:', zoomError.message);
+            // Continue without Zoom meeting - don't fail the booking
+        }
+
+        // Send email notifications
+        try {            // Prepare booking data for email
             const bookingEmailData = {
                 guestInfo,
                 title: meeting.title,
@@ -387,7 +449,14 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
                 timezone: timezone,
                 duration: mt.defaultDuration,
                 meetingName: mt.name,
-                organizer: meeting.organizer
+                organizer: meeting.organizer,
+                // Add Zoom meeting details
+                zoomMeeting: zoomMeetingData ? {
+                    joinUrl: zoomMeetingData.joinUrl,
+                    meetingNumber: zoomMeetingData.meetingNumber,
+                    password: zoomMeetingData.password,
+                    startUrl: zoomMeetingData.startUrl
+                } : null
             };
 
             // Send confirmation email to customer
@@ -402,9 +471,7 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
         } catch (emailError) {
             console.error('Failed to send booking emails:', emailError);
             // Don't fail the booking creation if email fails
-        }
-
-        res.status(201).json({
+        } res.status(201).json({
             success: true,
             message: 'Meeting scheduled successfully!',
             data: {
@@ -412,7 +479,14 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
                 confirmedDate: date,
                 confirmedTime: time,
                 timezone: timezone,
-                meetingName: mt.name
+                meetingName: mt.name,
+                // Include Zoom meeting details in response
+                zoomMeeting: zoomMeetingData ? {
+                    joinUrl: zoomMeetingData.joinUrl,
+                    meetingNumber: zoomMeetingData.meetingNumber,
+                    password: zoomMeetingData.password,
+                    meetingId: zoomMeetingData.meetingId
+                } : null
             }
         });
     } catch (error) {
@@ -470,6 +544,164 @@ router.get('/public/:meetingTypeId/bookings', async (req, res, next) => {
         });
     } catch (error) {
         next(error);
+    }
+});
+
+// @route   GET /api/v1/meetings/recent
+// @desc    Get recent meetings with Zoom details (protected route)
+// @access  Private
+router.get('/recent', auth, async (req, res) => {
+    try {
+        const { page = 1, limit = 10 } = req.query;
+        const skip = (page - 1) * limit;
+
+        const meetings = await Meeting.find({
+            userId: req.user.userId
+        })
+            .populate('meetingTypeId', 'name description')
+            .sort({ scheduledAt: -1 })
+            .skip(skip)
+            .limit(parseInt(limit))
+            .lean();
+
+        const totalMeetings = await Meeting.countDocuments({
+            userId: req.user.userId
+        });
+
+        // Format meetings for frontend
+        const formattedMeetings = meetings.map(meeting => ({
+            id: meeting._id,
+            title: meeting.title,
+            description: meeting.description,
+            date: meeting.date,
+            time: meeting.time,
+            originalDate: meeting.originalDate,
+            originalTime: meeting.originalTime,
+            duration: meeting.duration,
+            status: meeting.status,
+            timezone: meeting.timezone,
+            guestInfo: meeting.guestInfo,
+            meetingType: meeting.meetingTypeId,
+            zoomMeeting: meeting.zoomMeetingId ? {
+                meetingId: meeting.zoomMeetingId,
+                meetingNumber: meeting.zoomMeetingNumber,
+                joinUrl: meeting.zoomJoinUrl,
+                startUrl: meeting.zoomStartUrl,
+                password: meeting.zoomPassword
+            } : null,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.updatedAt
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                meetings: formattedMeetings,
+                pagination: {
+                    currentPage: parseInt(page),
+                    totalPages: Math.ceil(totalMeetings / limit),
+                    totalMeetings,
+                    hasNext: skip + meetings.length < totalMeetings,
+                    hasPrev: page > 1
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Get recent meetings error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch recent meetings'
+        });
+    }
+});
+
+// @route   POST /api/v1/meetings/zoom-webhook
+// @desc    Handle Zoom webhook events
+// @access  Public (but verified)
+router.post('/zoom-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    try {
+        const signature = req.headers['authorization'];
+        const timestamp = req.headers['x-zm-request-timestamp'];
+        const body = req.body.toString();
+
+        // Verify webhook signature
+        if (!zoomService.verifyWebhookSignature(signature, timestamp, body)) {
+            return res.status(401).json({ success: false, message: 'Invalid signature' });
+        }
+
+        const event = JSON.parse(body);
+        console.log('🎥 Zoom webhook received:', event.event);
+
+        // Handle different Zoom events
+        switch (event.event) {
+            case 'meeting.started':
+                console.log(`Meeting started: ${event.payload.object.id}`);
+                // Update meeting status to 'in-progress'
+                await Meeting.findOneAndUpdate(
+                    { zoomMeetingId: event.payload.object.id },
+                    { status: 'in-progress' }
+                );
+                break;
+
+            case 'meeting.ended':
+                console.log(`Meeting ended: ${event.payload.object.id}`);
+                // Update meeting status to 'completed'
+                await Meeting.findOneAndUpdate(
+                    { zoomMeetingId: event.payload.object.id },
+                    { status: 'completed' }
+                );
+                break;
+
+            case 'meeting.participant_joined':
+                console.log(`Participant joined: ${event.payload.object.participant.user_name}`);
+                break;
+
+            case 'meeting.participant_left':
+                console.log(`Participant left: ${event.payload.object.participant.user_name}`);
+                break;
+
+            default:
+                console.log(`Unhandled Zoom event: ${event.event}`);
+        }
+
+        res.status(200).json({ success: true });
+
+    } catch (error) {
+        console.error('Zoom webhook error:', error);
+        res.status(500).json({ success: false, message: 'Webhook processing failed' });
+    }
+});
+
+// @route   GET /api/v1/meetings/debug/:meetingTypeId
+// @desc    Debug endpoint to check existing meetings for a meeting type
+// @access  Public (for debugging)
+router.get('/debug/:meetingTypeId', async (req, res) => {
+    try {
+        const { meetingTypeId } = req.params;
+
+        const meetings = await Meeting.find({ meetingTypeId })
+            .select('date time status guestInfo.name createdAt')
+            .sort({ date: 1, time: 1 });
+
+        const meetingType = await MeetingTypeDefinition.findById(meetingTypeId)
+            .select('name timezone defaultDuration');
+
+        res.json({
+            success: true,
+            data: {
+                meetingType,
+                existingMeetings: meetings,
+                totalMeetings: meetings.length
+            }
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Debug query failed',
+            error: error.message
+        });
     }
 });
 

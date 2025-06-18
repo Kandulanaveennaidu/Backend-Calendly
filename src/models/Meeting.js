@@ -129,6 +129,31 @@ const meetingSchema = new mongoose.Schema({
     timezone: {
         type: String,
         default: 'UTC'
+    },
+    // Zoom Integration Fields
+    zoomMeetingId: {
+        type: String,
+        trim: true
+    },
+    zoomMeetingNumber: {
+        type: String,
+        trim: true
+    },
+    zoomJoinUrl: {
+        type: String,
+        trim: true
+    },
+    zoomStartUrl: {
+        type: String,
+        trim: true
+    },
+    zoomPassword: {
+        type: String,
+        trim: true
+    },
+    zoomHostId: {
+        type: String,
+        trim: true
     }
 }, {
     timestamps: true

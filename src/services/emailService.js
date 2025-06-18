@@ -290,10 +290,9 @@ class EmailService {
     // Send confirmation to customer
     return this.sendEmail(email, 'Thank you for your interest in our platform!', customerHtml);
   }
-
   // Booking Confirmation Email
   async sendBookingConfirmation(bookingData) {
-    const { guestInfo, title, date, time, timezone, duration, meetingName, organizer } = bookingData;
+    const { guestInfo, title, date, time, timezone, duration, meetingName, organizer, zoomMeeting } = bookingData;
 
     const formatTime = (timeStr) => {
       const [hours, minutes] = timeStr.split(':');
@@ -324,9 +323,7 @@ class EmailService {
           
           <p style="font-size: 16px; color: #555; line-height: 1.6;">
             Great news! Your meeting has been successfully scheduled. We're looking forward to connecting with you.
-          </p>
-
-          <div style="background: #f8f9fa; padding: 25px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #667eea;">
+          </p>          <div style="background: #f8f9fa; padding: 25px; border-radius: 8px; margin: 25px 0; border-left: 4px solid #667eea;">
             <h3 style="color: #333; margin: 0 0 15px 0; font-size: 20px;">📅 Meeting Details</h3>
             
             <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -336,7 +333,64 @@ class EmailService {
               <div><span style="font-weight: bold; color: #667eea;">Duration:</span> ${duration} minutes</div>
               ${organizer ? `<div><span style="font-weight: bold; color: #667eea;">Host:</span> ${organizer.name} (${organizer.email})</div>` : ''}
             </div>
-          </div>
+          </div>          ${zoomMeeting ? `
+            <div style="background: #f0f8ff; padding: 30px; border-radius: 10px; margin: 30px 0; border: 2px solid #2d8cff;">
+              <h2 style="color: #1e4d72; margin: 0 0 20px 0; font-size: 24px; text-align: center;">🎥 Your Meeting is Scheduled!</h2>
+              
+              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3 style="color: #1e4d72; margin: 0 0 15px 0; font-size: 20px;">📅 Meeting Information</h3>
+                <div style="line-height: 2;">
+                  <p><strong>Meeting:</strong> ${title || meetingName}</p>
+                  <p><strong>Date:</strong> ${formatDate(date)}</p>
+                  <p><strong>Time:</strong> ${formatTime(time)} (${timezone || 'UTC'})</p>
+                  <p><strong>Duration:</strong> ${duration} minutes</p>
+                  ${organizer ? `<p><strong>Host:</strong> ${organizer.name} (${organizer.email})</p>` : ''}
+                </div>
+              </div>
+              
+              <hr style="border: none; border-top: 2px solid #2d8cff; margin: 25px 0;">
+              
+              <div style="background: white; padding: 20px; border-radius: 8px;">
+                <h3 style="color: #1e4d72; margin: 0 0 20px 0; font-size: 20px;">🎥 Zoom Meeting Details</h3>
+                
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin: 15px 0;">
+                  <p style="margin: 5px 0;"><strong>Join Link:</strong><br>
+                  <a href="${zoomMeeting.joinUrl}" style="color: #2d8cff; word-break: break-all; text-decoration: underline;">${zoomMeeting.joinUrl}</a></p>
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; margin: 15px 0;">
+                  <div style="flex: 1; margin-right: 10px;">
+                    <p style="margin: 5px 0;"><strong>Meeting ID:</strong><br>
+                    <span style="font-size: 18px; font-weight: bold; color: #1e4d72;">${zoomMeeting.meetingNumber}</span></p>
+                  </div>
+                  <div style="flex: 1; margin-left: 10px;">
+                    <p style="margin: 5px 0;"><strong>Password:</strong><br>
+                    <span style="font-size: 18px; font-weight: bold; color: #1e4d72;">${zoomMeeting.password}</span></p>
+                  </div>
+                </div>
+                
+                <div style="text-align: center; margin: 25px 0;">
+                  <a href="${zoomMeeting.joinUrl}" 
+                     style="background: #2d8cff; color: white; padding: 15px 30px; 
+                            text-decoration: none; border-radius: 8px; display: inline-block; 
+                            font-weight: bold; font-size: 16px; box-shadow: 0 4px 6px rgba(45,140,255,0.3);">
+                    🎥 Join Zoom Meeting
+                  </a>
+                </div>
+                
+                <div style="background: #e8f4fd; padding: 15px; border-radius: 6px; border-left: 4px solid #2d8cff;">
+                  <h4 style="margin: 0 0 10px 0; color: #1e4d72;">💡 Meeting Instructions:</h4>
+                  <ul style="margin: 0; padding-left: 20px; color: #333;">
+                    <li>Click the "Join Zoom Meeting" button above</li>
+                    <li>Or copy and paste the join link into your browser</li>
+                    <li>Use Meeting ID: <strong>${zoomMeeting.meetingNumber}</strong> if prompted</li>
+                    <li>Enter Password: <strong>${zoomMeeting.password}</strong> when asked</li>
+                    <li>Please join 2-3 minutes before the scheduled time</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ` : ''}
 
           <div style="background: #e8f4fd; padding: 20px; border-radius: 8px; margin: 25px 0; border: 1px solid #bee5eb;">
             <h4 style="color: #0c5460; margin: 0 0 10px 0;">💡 What's Next?</h4>
@@ -370,10 +424,9 @@ class EmailService {
 
     return this.sendEmail(guestInfo.email, `Meeting Confirmed: ${title || meetingName}`, html);
   }
-
   // Host notification when someone books a meeting
   async sendBookingNotificationToHost(bookingData, hostEmail) {
-    const { guestInfo, title, date, time, timezone, duration, meetingName } = bookingData;
+    const { guestInfo, title, date, time, timezone, duration, meetingName, zoomMeeting } = bookingData;
 
     const formatTime = (timeStr) => {
       const [hours, minutes] = timeStr.split(':');
@@ -411,15 +464,62 @@ class EmailService {
               <div><strong>Time:</strong> ${formatTime(time)} ${timezone ? `(${timezone})` : ''}</div>
               <div><strong>Duration:</strong> ${duration} minutes</div>
             </div>
-          </div>
-
-          <div style="background: #e8f4fd; padding: 20px; border-radius: 8px; margin: 25px 0; border: 1px solid #bee5eb;">
+          </div>          <div style="background: #e8f4fd; padding: 20px; border-radius: 8px; margin: 25px 0; border: 1px solid #bee5eb;">
             <h4 style="color: #0c5460; margin: 0 0 15px 0;">Guest Information:</h4>
             <div><strong>Name:</strong> ${guestInfo.name}</div>
             <div><strong>Email:</strong> ${guestInfo.email}</div>
             ${guestInfo.phone ? `<div><strong>Phone:</strong> ${guestInfo.phone}</div>` : ''}
             ${guestInfo.notes ? `<div><strong>Notes:</strong> ${guestInfo.notes}</div>` : ''}
-          </div>
+          </div>          ${zoomMeeting ? `
+            <div style="background: #fff9e6; padding: 25px; border-radius: 10px; margin: 25px 0; border: 2px solid #ff9800;">
+              <h3 style="color: #e65100; margin: 0 0 20px 0; font-size: 20px; text-align: center;">🎥 Zoom Meeting - Host Controls</h3>
+              
+              <div style="background: white; padding: 20px; border-radius: 8px; margin: 15px 0;">
+                <h4 style="color: #e65100; margin: 0 0 15px 0;">Meeting Credentials:</h4>
+                <div style="display: flex; justify-content: space-between;">
+                  <div style="flex: 1; margin-right: 10px;">
+                    <p><strong>Meeting ID:</strong><br>
+                    <span style="font-size: 18px; font-weight: bold; color: #e65100;">${zoomMeeting.meetingNumber}</span></p>
+                  </div>
+                  <div style="flex: 1; margin-left: 10px;">
+                    <p><strong>Password:</strong><br>
+                    <span style="font-size: 18px; font-weight: bold; color: #e65100;">${zoomMeeting.password}</span></p>
+                  </div>
+                </div>
+                
+                <div style="margin: 15px 0;">
+                  <p><strong>Join URL:</strong><br>
+                  <a href="${zoomMeeting.joinUrl}" style="color: #e65100; word-break: break-all; text-decoration: underline;">${zoomMeeting.joinUrl}</a></p>
+                </div>
+              </div>
+              
+              <div style="text-align: center; margin: 20px 0;">
+                <a href="${zoomMeeting.startUrl}" 
+                   style="background: #007bff; color: white; padding: 12px 25px; 
+                          text-decoration: none; border-radius: 8px; display: inline-block; 
+                          font-weight: bold; margin: 5px; font-size: 16px;">
+                  � Start Meeting (Host)
+                </a>
+                <a href="${zoomMeeting.joinUrl}" 
+                   style="background: #28a745; color: white; padding: 12px 25px; 
+                          text-decoration: none; border-radius: 8px; display: inline-block; 
+                          font-weight: bold; margin: 5px; font-size: 16px;">
+                  🎥 Join as Participant
+                </a>
+              </div>
+              
+              <div style="background: #ffeaa7; padding: 15px; border-radius: 6px; border-left: 4px solid #ff9800;">
+                <h4 style="margin: 0 0 10px 0; color: #e65100;">👨‍💼 Host Instructions:</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #333;">
+                  <li>Use the "Start Meeting" button to begin as host</li>
+                  <li>You have full control over the meeting settings</li>
+                  <li>You can admit participants from the waiting room</li>
+                  <li>Share the join link with additional participants if needed</li>
+                  <li>Meeting will automatically end if host leaves (configurable)</li>
+                </ul>
+              </div>
+            </div>
+          ` : ''}
 
           <div style="text-align: center; margin: 30px 0;">
             <a href="${FRONTEND_URL}/dashboard" 
