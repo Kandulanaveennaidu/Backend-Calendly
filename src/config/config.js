@@ -13,14 +13,14 @@ module.exports = {
   JWT_EXPIRE: process.env.JWT_EXPIRE || '1h',
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret_change_in_production',
   JWT_REFRESH_EXPIRE: process.env.JWT_REFRESH_EXPIRE || '7d',
-
   // Email
   EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@calendly-clone.com',
-  EMAIL_SERVICE: process.env.EMAIL_SERVICE || 'gmail',
+  EMAIL_SERVICE: process.env.EMAIL_SERVICE || 'smtp',
   EMAIL_HOST: process.env.EMAIL_HOST || 'smtp.gmail.com',
   EMAIL_PORT: parseInt(process.env.EMAIL_PORT) || 587,
   EMAIL_USER: process.env.EMAIL_USER || '',
   EMAIL_PASS: process.env.EMAIL_PASS || '',
+  EMAIL_USE_TLS: process.env.EMAIL_USE_TLS === 'true' || false,
 
   // Frontend
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:3000',

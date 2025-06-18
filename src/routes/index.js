@@ -10,6 +10,7 @@ const meetingRoutes = require('./meetingRoutes');
 const calendarRoutes = require('./calendarRoutes');
 const dashboardRoutes = require('./dashboardRoutes');
 const timezoneRoutes = require('./timezoneRoutes');
+const contactRoutes = require('./contactRoutes');
 
 // Use routes with proper middleware
 router.use('/auth', authRoutes);
@@ -20,6 +21,7 @@ router.use('/meetings', meetingRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/dashboard', dashboardRoutes); // Remove auth middleware for now
 router.use('/timezones', timezoneRoutes);
+router.use('/contact', contactRoutes);
 
 // API documentation endpoint
 router.get('/', (req, res) => {

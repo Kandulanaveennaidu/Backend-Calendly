@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const MeetingTypeDefinition = require('../models/MeetingTypeDefinition');
 const Meeting = require('../models/Meeting');
 const moment = require('moment-timezone');
+const emailService = require('../services/emailService');
 
 const router = express.Router();
 
@@ -373,9 +374,35 @@ router.post('/public/:meetingTypeId/bookings', async (req, res, next) => {
                 name: mt.organizer?.name || 'Meeting Organizer',
                 email: mt.organizer?.email || 'no-reply@example.com'
             }
-        });
+        }); await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
 
-        await MeetingTypeDefinition.findByIdAndUpdate(meetingTypeId, { $inc: { totalBookings: 1 } });
+        // Send email notifications
+        try {
+            // Prepare booking data for email
+            const bookingEmailData = {
+                guestInfo,
+                title: meeting.title,
+                date: date, // Original guest date
+                time: time, // Original guest time
+                timezone: timezone,
+                duration: mt.defaultDuration,
+                meetingName: mt.name,
+                organizer: meeting.organizer
+            };
+
+            // Send confirmation email to customer
+            await emailService.sendBookingConfirmation(bookingEmailData);
+
+            // Send notification to host/organizer
+            if (mt.createdBy && meeting.organizer?.email) {
+                await emailService.sendBookingNotificationToHost(bookingEmailData, meeting.organizer.email);
+            }
+
+            console.log('Booking confirmation emails sent successfully');
+        } catch (emailError) {
+            console.error('Failed to send booking emails:', emailError);
+            // Don't fail the booking creation if email fails
+        }
 
         res.status(201).json({
             success: true,
